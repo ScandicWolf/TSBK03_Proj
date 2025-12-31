@@ -1,0 +1,74 @@
+#version 430
+layout(local_size_x = 256) in;
+
+layout(std430, binding = 0) readonly buffer Src { vec2 src[]; };
+layout(std430, binding = 1) writeonly buffer Dst { vec2 dst[]; };
+
+uniform int u_length;   // FFT length per sequence
+uniform int u_stride;   // stride for indexing: 1 for rows, W for columns
+uniform int u_count;    // number of sequences in this batch
+uniform int u_stage;    // -1 == bit reversal pass, else stage number (1..log2(length))
+uniform int u_dir;      // 1 forward, -1 inverse
+
+const float PI = 3.14159265358979323846;
+
+vec2 cmul(vec2 a, vec2 b) { return vec2(a.x*b.x - a.y*b.y, a.x*b.y + a.y*b.x); }
+vec2 cadd(vec2 a, vec2 b) { return a + b; }
+vec2 csub(vec2 a, vec2 b) { return a - b; }
+
+// reverse 'bits' low bits of value v
+uint reverseBits(uint v, int bits) {
+    uint r = 0u;
+    for (int i = 0; i < bits; ++i) {
+        r = (r << 1) | (v & 1u);
+        v >>= 1u;
+    }
+    return r;
+}
+
+void main() {
+    uint gid = gl_GlobalInvocationID.x;
+    uint len = uint(u_length);
+
+    if (u_stage == -1) {
+        uint total = uint(u_count) * len;
+        if (gid >= total) return;
+        uint seq = gid / len;
+        uint pos = gid % len;
+        int bits = int(round(log2(float(u_length))));
+        uint rev = reverseBits(pos, bits);
+        uint srcIdx = (u_stride == 1) ? (seq * len + pos) : (pos * uint(u_stride) + seq);
+        uint dstIdx = (u_stride == 1) ? (seq * len + rev) : (rev * uint(u_stride) + seq);
+        dst[dstIdx] = src[srcIdx];
+        return;
+    }
+
+    uint butterfliesPerSeq = len / 2u;
+    uint totalButterflies = uint(u_count) * butterfliesPerSeq;
+    if (gid >= totalButterflies) return;
+
+    uint seq = gid / butterfliesPerSeq;
+    uint bIndex = gid % butterfliesPerSeq;
+
+    uint stage = uint(u_stage);
+    uint blockSize = 1u << stage;
+    uint halfSize = blockSize >> 1u;
+    uint blockIndex = bIndex / halfSize;
+    uint pairIndex = bIndex % halfSize;
+
+    uint i = blockIndex * blockSize + pairIndex;
+    uint j = i + halfSize;
+
+    uint idxI = (u_stride == 1) ? (seq * len + i) : (i * uint(u_stride) + seq);
+    uint idxJ = (u_stride == 1) ? (seq * len + j) : (j * uint(u_stride) + seq);
+
+    vec2 a = src[idxI];
+    vec2 b = src[idxJ];
+
+    float angle = -float(u_dir) * 2.0 * PI * float(pairIndex) / float(blockSize);
+    vec2 W = vec2(cos(angle), sin(angle));
+    vec2 t = vec2(b.x*W.x - b.y*W.y, b.x*W.y + b.y*W.x);
+
+    dst[idxI] = a + t;
+    dst[idxJ] = a - t;
+}

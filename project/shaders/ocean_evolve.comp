@@ -1,0 +1,52 @@
+#version 430
+layout(local_size_x = 256) in;
+
+layout(std430, binding = 0) readonly buffer H0buf { vec2 H0[]; };
+layout(std430, binding = 1) writeonly buffer Htbuf { vec2 Ht[]; };
+
+uniform int u_N;
+uniform float u_time;
+uniform float u_domainSize;
+uniform float u_gravity;
+
+const float PI = 3.14159265358979323846;
+
+void main() {
+    uint id = gl_GlobalInvocationID.x;
+    int N = u_N;
+
+    if (id >= uint(N*N)) return;
+
+    int x = int(id % N);
+    int y = int(id / N);
+
+    float domain = max(u_domainSize, 1.0);
+    float twoPiOverDomain = (2.0 * PI) / domain;
+
+    // k-space coordinate centered
+    float kx = float(x - N/2) * twoPiOverDomain;
+    float ky = float(y - N/2) * twoPiOverDomain;
+    float k = sqrt(kx*kx + ky*ky);
+
+    vec2 h0k = H0[id];
+    vec2 h0mk = H0[(N - y - 1) * N + (N - x - 1)];
+
+    float omega = sqrt(u_gravity * k);
+
+    float coswt = cos(omega * u_time);
+    float sinwt = sin(omega * u_time);
+
+    // h(k,t) = h0(k) * e^{iwt} + h0*(-k) * e^{-iwt}
+    vec2 c = vec2(coswt, sinwt);
+    vec2 cm = vec2(coswt, -sinwt);
+
+    vec2 term1 = vec2(h0k.x*c.x - h0k.y*c.y,
+                      h0k.x*c.y + h0k.y*c.x);
+
+    vec2 h0mk_conj = vec2(h0mk.x, -h0mk.y);
+
+    vec2 term2 = vec2(h0mk_conj.x*cm.x - h0mk_conj.y*cm.y,
+                      h0mk_conj.x*cm.y + h0mk_conj.y*cm.x);
+
+    Ht[id] = term1 + term2;
+}

@@ -1,0 +1,30 @@
+#version 430
+layout(local_size_x = 256) in;
+
+layout(std430, binding = 0) readonly buffer Htbuf { vec2 Ht[]; };
+layout(r32f, binding = 0) writeonly uniform image2D u_Output;
+
+uniform int u_N;
+
+void main() {
+    uint id = gl_GlobalInvocationID.x;
+    int N = u_N;
+
+    if (id >= uint(N*N)) return;
+
+    // 2D coordinates in row-major layout
+    int x = int(id % uint(N));
+    int y = int(id / uint(N));
+
+    // Real part
+    float val = Ht[id].x;
+
+    // Apply checkerboard phase fix due to centered k-indexing ((x - N/2), (y - N/2))
+    // Multiply by (-1)^(x+y) to undo the spectral shift when going back to spatial domain.
+    if (((x + y) & 1) == 1) val = -val;
+
+    // Normalize IFFT result (1/(N*N))
+    val /= float(N * N);
+
+    imageStore(u_Output, ivec2(x, y), vec4(val, 0.0, 0.0, 0.0));
+}

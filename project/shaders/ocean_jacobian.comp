@@ -1,0 +1,45 @@
+#version 430
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(binding = 0) uniform sampler2D u_DispX;
+layout(binding = 1) uniform sampler2D u_DispZ;
+layout(r32f, binding = 0) writeonly uniform image2D u_JacobianOut;
+
+uniform float u_CellSize;
+uniform float u_Amplitude;
+uniform float u_Choppiness;
+
+void main()
+{
+    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = textureSize(u_DispX, 0);
+    if (coord.x >= size.x || coord.y >= size.y)
+        return;
+
+    int xP = (coord.x + 1) % size.x;
+    int xM = (coord.x + size.x - 1) % size.x;
+    int yP = (coord.y + 1) % size.y;
+    int yM = (coord.y + size.y - 1) % size.y;
+
+    float dispX_xp = texelFetch(u_DispX, ivec2(xP, coord.y), 0).r;
+    float dispX_xm = texelFetch(u_DispX, ivec2(xM, coord.y), 0).r;
+    float dispX_yp = texelFetch(u_DispX, ivec2(coord.x, yP), 0).r;
+    float dispX_ym = texelFetch(u_DispX, ivec2(coord.x, yM), 0).r;
+
+    float dispZ_xp = texelFetch(u_DispZ, ivec2(xP, coord.y), 0).r;
+    float dispZ_xm = texelFetch(u_DispZ, ivec2(xM, coord.y), 0).r;
+    float dispZ_yp = texelFetch(u_DispZ, ivec2(coord.x, yP), 0).r;
+    float dispZ_ym = texelFetch(u_DispZ, ivec2(coord.x, yM), 0).r;
+
+    float scale = -u_Amplitude * u_Choppiness;
+    float inv2Cell = (scale != 0.0) ? (scale / (2.0 * u_CellSize)) : 0.0;
+
+    float dDx_dx = (dispX_xp - dispX_xm) * inv2Cell;
+    float dDx_dz = (dispX_yp - dispX_ym) * inv2Cell;
+    float dDz_dx = (dispZ_xp - dispZ_xm) * inv2Cell;
+    float dDz_dz = (dispZ_yp - dispZ_ym) * inv2Cell;
+
+    float jacobian = (1.0 + dDx_dx) * (1.0 + dDz_dz) - dDx_dz * dDz_dx;
+    
+    imageStore(u_JacobianOut, coord, vec4(jacobian, 0.0, 0.0, 0.0));
+}
